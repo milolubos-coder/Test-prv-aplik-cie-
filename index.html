@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Moja Sync Aplikácia</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .task-item { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen font-sans flex flex-col items-center p-4">
+
+    <div class="w-full max-w-md mt-6 md:mt-12">
+        <div class="bg-white rounded-3xl shadow-2xl p-6 md:p-8 border border-slate-200">
+            <header class="mb-8 flex justify-between items-center">
+                <div>
+                    <h1 class="text-2xl font-black text-slate-900 tracking-tight">Cloud Úlohy</h1>
+                    <div class="flex items-center gap-2 mt-1">
+                        <div id="statusDot" class="w-2 h-2 rounded-full bg-orange-400"></div>
+                        <p id="modeStatus" class="text-slate-500 text-[10px] font-bold uppercase tracking-wider text-orange-500">Pripájanie...</p>
+                    </div>
+                </div>
+                <div id="statusIcon" class="text-slate-200">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+                    </svg>
+                </div>
+            </header>
+
+            <!-- Vstup -->
+            <div class="flex gap-2 mb-8">
+                <input type="text" id="taskInput" placeholder="Napíšte úlohu..." 
+                    class="flex-1 px-5 py-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700 shadow-inner">
+                <button onclick="addTask()" id="addBtn"
+                    class="bg-blue-600 hover:bg-blue-700 text-white w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg transition-all active:scale-90">
+                    <span class="text-2xl font-bold">+</span>
+                </button>
+            </div>
+
+            <!-- Zoznam -->
+            <ul id="taskList" class="space-y-3 min-h-[100px]">
+                <!-- Úlohy sa načítajú sem -->
+                <div class="flex justify-center py-10">
+                    <div class="loading-spinner"></div>
+                </div>
+            </ul>
+
+            <div class="mt-8 pt-6 border-t border-slate-100 flex justify-between text-[10px] text-slate-400 font-black uppercase tracking-[0.1em]">
+                <span id="taskCount">0 Úloh</span>
+                <button onclick="clearCompleted()" class="hover:text-red-500 transition-colors">Vymazať všetko</button>
+            </div>
+        </div>
+        
+        <p class="text-center text-slate-400 text-[10px] mt-8 uppercase tracking-widest px-6">
+            Zmeny sa okamžite prejavia na všetkých vašich zariadeniach.
+        </p>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, collection, doc, addDoc, onSnapshot, updateDoc, deleteDoc, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+        // Vaša konfigurácia vložená priamo sem
+        const firebaseConfig = {
+            apiKey: "AIzaSyB_fkCJcIZRJxAf8XdfQn0WJtHfFiSCWqo",
+            authDomain: "noveukoly.firebaseapp.com",
+            projectId: "noveukoly",
+            storageBucket: "noveukoly.firebasestorage.app",
+            messagingSenderId: "455038627435",
+            appId: "1:455038627435:web:e8ffa9875078791058cb2e",
+            measurementId: "G-15YN0QQX7H"
+        };
+
+        let db;
+        const collectionName = "my_sync_tasks";
+
+        async function startApp() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                const auth = getAuth(app);
+                db = getFirestore(app);
+
+                // Anonymné prihlásenie pre synchronizáciu
+                await signInAnonymously(auth);
+
+                updateStatus(true);
+
+                // Sledovanie databázy v reálnom čase
+                const colRef = collection(db, collectionName);
+                onSnapshot(colRef, (snapshot) => {
+                    const tasks = [];
+                    snapshot.forEach(d => tasks.push({ id: d.id, ...d.data() }));
+                    render(tasks);
+                });
+
+            } catch (error) {
+                console.error("Chyba:", error);
+                document.getElementById('modeStatus').innerText = "Chyba pripojenia";
+            }
+        }
+
+        window.addTask = async () => {
+            const input = document.getElementById('taskInput');
+            const val = input.value.trim();
+            if (!val || !db) return;
+
+            try {
+                await addDoc(collection(db, collectionName), {
+                    text: val,
+                    completed: false,
+                    createdAt: Date.now()
+                });
+                input.value = '';
+            } catch (e) { console.error(e); }
+        };
+
+        window.toggleTask = async (id, currentStatus) => {
+            await updateDoc(doc(db, collectionName, id), { completed: !currentStatus });
+        };
+
+        window.deleteTask = async (id) => {
+            await deleteDoc(doc(db, collectionName, id));
+        };
+
+        window.clearCompleted = async () => {
+            if(!confirm("Naozaj chcete vymazať všetky úlohy?")) return;
+            const querySnapshot = await getDocs(collection(db, collectionName));
+            const batch = writeBatch(db);
+            querySnapshot.forEach((d) => batch.delete(d.ref));
+            await batch.commit();
+        };
+
+        function render(tasks) {
+            const list = document.getElementById('taskList');
+            list.innerHTML = '';
+            
+            // Zoradenie: Najnovšie navrchu
+            tasks.sort((a, b) => b.createdAt - a.createdAt);
+
+            tasks.forEach(t => {
+                const li = document.createElement('li');
+                li.className = `task-item flex items-center justify-between p-4 rounded-2xl transition-all ${t.completed ? 'bg-slate-50 opacity-60' : 'bg-white border border-slate-100 shadow-sm'}`;
+                li.innerHTML = `
+                    <div class="flex items-center gap-4 flex-1 cursor-pointer" id="t-${t.id}">
+                        <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${t.completed ? 'bg-green-500 border-green-500' : 'border-slate-200'}">
+                            ${t.completed ? '<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke-width="4"></path></svg>' : ''}
+                        </div>
+                        <span class="${t.completed ? 'line-through text-slate-400 font-normal' : 'text-slate-800 font-bold'}">${t.text}</span>
+                    </div>
+                    <button id="d-${t.id}" class="text-slate-300 hover:text-red-500 p-2 transition-colors">✕</button>
+                `;
+                list.appendChild(li);
+                
+                document.getElementById(`t-${t.id}`).onclick = () => window.toggleTask(t.id, t.completed);
+                document.getElementById(`d-${t.id}`).onclick = (e) => { e.stopPropagation(); window.deleteTask(t.id); };
+            });
+
+            document.getElementById('taskCount').innerText = `${tasks.length} Úloh`;
+        }
+
+        function updateStatus(isOnline) {
+            const dot = document.getElementById('statusDot');
+            const status = document.getElementById('modeStatus');
+            const icon = document.getElementById('statusIcon');
+
+            if (isOnline) {
+                dot.classList.replace('bg-orange-400', 'bg-green-500');
+                status.innerText = "Cloud Sync Aktívny";
+                status.classList.replace('text-orange-500', 'text-green-600');
+                icon.classList.replace('text-slate-200', 'text-blue-500');
+            }
+        }
+
+        startApp();
+    </script>
+</body>
+</html>
+
