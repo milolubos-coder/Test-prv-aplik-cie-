@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="widthhttps://www.google.com/search?q=vyzinac+4+takt&client=safari&hs=0189&sca_esv=f7e7e39cbdb7bf55&hl=sk-sk&ei=sEmsafOlH-OL9u8P5N7rkQY&biw=1180&bih=713&oq=vyzinacka+benzinova+4&gs_lp=Egxnd3Mtd2l6LXNlcnAiFXZ5emluYWNrYSBiZW56aW5vdmEgNCoCCAIyBRAAGO8FMggQABiABBiiBDIFEAAY7wUyBRAAGO8FMgUQABjvBUjWTFDqF1jdLXACeAGQAQCYAW6gAZ8CqgEDMi4xuAEByAEA-AEBmAIFoAK9AsICChAAGEcY1gQYsAPCAg0QABiABBiKBRhDGLADwgIIEAAYFhgeGArCAgYQABgWGB6YAwCIBgGQBgqSBwMzLjKgB_4HsgcDMS4yuAe3AsIHBTAuMS40yAcXgAgB&sclient=gws-wiz-serp=device-width, initial-scale=1.0">
+    <title>Moja Sync Aplikácia</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .loading-spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans flex flex-col items-center p-4">
+
+    <div class="w-full max-w-md mt-10">
+        <div class="bg-white rounded-3xl shadow-xl p-6 md:p-8 border border-slate-100">
+            <header class="mb-6 flex justify-between items-center">
+                <div>
+                    <h1 class="text-2xl font-black text-slate-800">Projektový Sync</h1>
+                    <p class="text-blue-500 text-xs font-bold uppercase tracking-tighter">Dáta v cloude</p>
+                </div>
+                <div id="statusIcon" class="text-slate-300">
+                    <!-- Ikona stavu pripojenia -->
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+                    </svg>
+                </div>
+            </header>
+
+            <!-- Vstup -->
+            <div class="flex gap-2 mb-6">
+                <input type="text" id="taskInput" placeholder="Pridať úlohu pre všetky zariadenia..." 
+                    class="flex-1 px-4 py-3 bg-slate-100 border-none rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-700">
+                <button onclick="addTask()" id="addBtn"
+                    class="bg-blue-600 hover:bg-blue-700 text-white w-12 h-12 rounded-xl flex items-center justify-center shadow-lg transition-transform active:scale-95">
+                    <span id="btnLabel">+</span>
+                    <div id="btnSpinner" class="loading-spinner hidden"></div>
+                </button>
+            </div>
+
+            <!-- Zoznam -->
+            <ul id="taskList" class="space-y-3 min-h-[100px]">
+                <div class="flex flex-col items-center justify-center py-10 text-slate-400">
+                    <div class="loading-spinner mb-2"></div>
+                    <p class="text-sm">Pripájanie k databáze...</p>
+                </div>
+            </ul>
+
+            <div class="mt-6 pt-6 border-t border-slate-50 flex justify-between text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                <span id="userBadge">Pripájanie...</span>
+                <span>Auto-Sync zapnutý</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, addDoc, onSnapshot, updateDoc, deleteDoc, query } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Konfigurácia (naplnená prostredím)
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'moj-test-sync';
+
+        let currentUser = null;
+        const collectionPath = `artifacts/${appId}/public/data/tasks`;
+
+        // 1. Prihlásenie (Anonymné, aby sme mohli hneď ukladať)
+        async function init() {
+            try {
+                await signInAnonymously(auth);
+            } catch (error) {
+                console.error("Chyba prihlásenia:", error);
+            }
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUser = user;
+                document.getElementById('userBadge').innerText = "Online";
+                document.getElementById('statusIcon').classList.remove('text-slate-300');
+                document.getElementById('statusIcon').classList.add('text-green-500');
+                listenToTasks();
+            }
+        });
+
+        // 2. Sledovanie zmien v reálnom čase (Sync)
+        function listenToTasks() {
+            const q = collection(db, collectionPath);
+            onSnapshot(q, (snapshot) => {
+                const tasks = [];
+                snapshot.forEach((doc) => {
+                    tasks.push({ id: doc.id, ...doc.data() });
+                });
+                renderTasks(tasks);
+            }, (error) => {
+                console.error("Chyba pri načítaní:", error);
+            });
+        }
+
+        // 3. UI Funkcie
+        window.addTask = async () => {
+            const input = document.getElementById('taskInput');
+            const text = input.value.trim();
+            if (!text || !currentUser) return;
+
+            setLoading(true);
+            try {
+                await addDoc(collection(db, collectionPath), {
+                    text: text,
+                    completed: false,
+                    createdAt: Date.now()
+                });
+                input.value = '';
+            } catch (e) {
+                console.error(e);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        window.toggleTask = async (id, currentStatus) => {
+            const docRef = doc(db, collectionPath, id);
+            await updateDoc(docRef, { completed: !currentStatus });
+        };
+
+        window.deleteTask = async (id) => {
+            const docRef = doc(db, collectionPath, id);
+            await deleteDoc(docRef);
+        };
+
+        function renderTasks(tasks) {
+            const list = document.getElementById('taskList');
+            list.innerHTML = '';
+
+            if (tasks.length === 0) {
+                list.innerHTML = '<p class="text-center text-slate-300 py-10">Žiadne úlohy. Pridajte prvú!</p>';
+                return;
+            }
+
+            // Zoradenie podľa času vytvorenia (jednoduché v pamäti)
+            tasks.sort((a, b) => b.createdAt - a.createdAt);
+
+            tasks.forEach(task => {
+                const li = document.createElement('li');
+                li.className = `flex items-center justify-between p-4 rounded-2xl transition-all ${task.completed ? 'bg-slate-50 opacity-60' : 'bg-white border border-slate-100 shadow-sm'}`;
+                
+                li.innerHTML = `
+                    <div class="flex items-center gap-4 flex-1 cursor-pointer" id="task-${task.id}">
+                        <div class="w-6 h-6 rounded-full border-2 flex items-center justify-center ${task.completed ? 'bg-green-500 border-green-500' : 'border-slate-200'}">
+                            ${task.completed ? '<svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke-width="3"></path></svg>' : ''}
+                        </div>
+                        <span class="${task.completed ? 'line-through text-slate-400' : 'text-slate-700 font-medium'}">${task.text}</span>
+                    </div>
+                    <button id="del-${task.id}" class="text-slate-300 hover:text-red-500 ml-4 p-1">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke-width="2"></path></svg>
+                    </button>
+                `;
+                list.appendChild(li);
+
+                // Event listenery
+                document.getElementById(`task-${task.id}`).onclick = () => window.toggleTask(task.id, task.completed);
+                document.getElementById(`del-${task.id}`).onclick = () => window.deleteTask(task.id);
+            });
+        }
+
+        function setLoading(isLoading) {
+            const btnLabel = document.getElementById('btnLabel');
+            const btnSpinner = document.getElementById('btnSpinner');
+            if (isLoading) {
+                btnLabel.classList.add('hidden');
+                btnSpinner.classList.remove('hidden');
+            } else {
+                btnLabel.classList.remove('hidden');
+                btnSpinner.classList.add('hidden');
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
+
